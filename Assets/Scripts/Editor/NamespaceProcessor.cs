@@ -11,7 +11,7 @@ namespace Editor
     {
         public static void OnWillCreateAsset(string path)
         {
-            path = path.Substring(0, path.Length - ".meta".Length);
+            path = path.Substring(0, path.Length - ".meta".Length).Replace(Path.AltDirectorySeparatorChar, Path.DirectorySeparatorChar);
 
             if (Path.GetExtension(path) != ".cs")
                 return;

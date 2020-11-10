@@ -1,22 +1,64 @@
+using Collada.Xml;
 using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Security.Principal;
 using System.Xml;
 using UnityEngine;
+using UnityEngine.UIElements;
 
 namespace Collada
 {
-    public class Parser : MonoBehaviour
+    public static class Parser
     {
-        [SerializeField]
-        private string _filename;
-
-        private void Start()
+        public static GameObject Load(string filename)
         {
-            var filename = Path.Combine(Application.streamingAssetsPath, _filename);
+            XmlDocument document = new XmlDocument();
+            document.Load(filename);
+
+            var root = document.DocumentElement;
+
+            var effects = new Dictionary<string, Color>();
+            foreach (XmlNode effect in root.Element("library_effects"))
+                effects[effect.Id()] = effect.Element("profile_COMMON", "technique", "lambert", "diffuse", "color").InnerText.Split().Select<string, (float channel, int index)>((channel, index) => (Convert.ToSingle(channel, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 4).Select(g => { var gChannels = g.Select(gData => gData.channel).ToArray(); return new Color(gChannels[0], gChannels[1], gChannels[2], gChannels[3]); }).First();
+
+            var materials = new Dictionary<string, Material>();
+            foreach (XmlNode material in root.Element("library_materials"))
+            {
+                var mat = new Material(Shader.Find("Standard"))
+                {
+                    color = effects[material.Element("instance_effect").Url()]
+                };
+
+                materials[material.Id()] = mat;
+            }
+
+            var meshes = new Dictionary<string, Mesh>();
+            foreach (XmlNode geometry in root.Element("library_geometries"))
+            {
+                var mesh = geometry.Element("mesh");
+
+                var sourcesVerified = new List<string>();
+
+                foreach (var triangles in mesh.Elements("triangles"))
+                {
+
+                }
+                
+
+                //meshes[geometry.Id()] = 
+            }
+
+            return null;
+        }
+
+        private static void Parse()
+        {
+            //var filename = Path.Combine(Application.streamingAssetsPath, _filename);
+            string filename = null;
 
             XmlDocument document = new XmlDocument();
             document.Load(filename);
@@ -57,36 +99,6 @@ namespace Collada
                 };
 
                 meshes[geometry.Attributes.GetNamedItem("id").InnerText] = mesh;
-            }
-            #endregion
-
-            #region Scene
-            Transform parent = new GameObject(Path.GetFileNameWithoutExtension(filename)).transform;
-
-            foreach (XmlNode obj in root.ChildNodes[5].ChildNodes[0])
-            {
-                Transform go = new GameObject(obj.Attributes.GetNamedItem("name").InnerText).transform;
-                go.parent = parent;
-
-                var matrixValues = obj.ChildNodes[0].InnerText.Split().Select(sValue => Convert.ToSingle(sValue, CultureInfo.InvariantCulture)).ToArray();
-
-                Matrix4x4 matrix = Matrix4x4.zero;
-                for (int i = 0, j = 0; i < matrixValues.Length; i += 4)
-                    matrix[i / 4, i % 4] = matrixValues[j++];
-
-                Debug.LogWarning(matrix.ValidTRS());
-                go.position = matrix.GetColumn(3);
-                go.localScale = new Vector3(matrix.GetColumn(0).magnitude, matrix.GetColumn(1).magnitude, matrix.GetColumn(2).magnitude);
-
-                matrix.SetPosition(Vector3.one);
-                matrix.SetRotation(Quaternion.Euler(0f, 90f, 0f));
-                go.FromMatrix(matrix);
-
-                go.gameObject.AddComponent<MeshFilter>().mesh = meshes[obj.ChildNodes[1].Attributes.GetNamedItem("url").InnerText.Substring(1)];
-                
-                var renderer = go.gameObject.AddComponent<MeshRenderer>();
-                renderer.material = new Material(Shader.Find("Standard"));
-                renderer.sharedMaterial.color = effects[materials[obj.ChildNodes[1].ChildNodes[0].ChildNodes[0].ChildNodes[0].Attributes.GetNamedItem("target").InnerText.Substring(1)]];
             }
             #endregion
         }

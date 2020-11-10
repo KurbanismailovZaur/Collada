@@ -149,10 +149,10 @@ MonoBehaviour:
   m_GameObject: {fileID: 48173780}
   m_Enabled: 1
   m_EditorHideFlags: 0
-  m_Script: {fileID: 11500000, guid: 078f1a6d89ca3c94cbbe62a15377257a, type: 3}
+  m_Script: {fileID: 11500000, guid: 604158d73a876c244a6b0be3557428fa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _filename: wires (manual).dae
+  _filename: cube.dae
 --- !u!4 &48173782
 Transform:
   m_ObjectHideFlags: 0
