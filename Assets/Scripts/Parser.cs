@@ -1,4 +1,4 @@
-using Collada.Xml;
+using Collada.Extensions;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -8,99 +8,201 @@ using System.Linq;
 using System.Security.Principal;
 using System.Xml;
 using UnityEngine;
-using UnityEngine.UIElements;
+using Collada.Extensions.Xml;
+using System.Runtime.Remoting.Messaging;
+using System.Net.Http.Headers;
 
 namespace Collada
 {
     public static class Parser
     {
+        private static Dictionary<string, Mesh> _meshes = new Dictionary<string, Mesh>();
+
         public static GameObject Load(string filename)
         {
             XmlDocument document = new XmlDocument();
             document.Load(filename);
 
-            var root = document.DocumentElement;
+            var rootElement = document.DocumentElement;
+            var root = new GameObject(Path.GetFileNameWithoutExtension(filename));
 
-            var effects = new Dictionary<string, Color>();
-            foreach (XmlNode effect in root.Element("library_effects"))
-                effects[effect.Id()] = effect.Element("profile_COMMON", "technique", "lambert", "diffuse", "color").InnerText.Split().Select<string, (float channel, int index)>((channel, index) => (Convert.ToSingle(channel, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 4).Select(g => { var gChannels = g.Select(gData => gData.channel).ToArray(); return new Color(gChannels[0], gChannels[1], gChannels[2], gChannels[3]); }).First();
-
-            var materials = new Dictionary<string, Material>();
-            foreach (XmlNode material in root.Element("library_materials"))
+            foreach (XmlNode sceneElement in rootElement.Elements("scene"))
             {
-                var mat = new Material(Shader.Find("Standard"))
+                var sceneId = sceneElement.Element("instance_visual_scene")?.Url();
+
+                if (sceneId == null)
+                    continue;
+
+                var visualSceneElement = rootElement.Element("library_visual_scenes").ElementWithId(sceneId);
+                var visualScene = CreateGameObjectWithParent(sceneId, root.transform);
+
+                foreach (XmlNode node in visualSceneElement.Elements("node"))
                 {
-                    color = effects[material.Element("instance_effect").Url()]
-                };
-
-                materials[material.Id()] = mat;
-            }
-
-            var meshes = new Dictionary<string, Mesh>();
-            foreach (XmlNode geometry in root.Element("library_geometries"))
-            {
-                var mesh = geometry.Element("mesh");
-
-                var sourcesVerified = new List<string>();
-
-                foreach (var triangles in mesh.Elements("triangles"))
-                {
-
+                    var gameObject = CreateNodeGameObject(rootElement, node);
+                    gameObject.transform.parent = visualScene.transform;
                 }
-                
-
-                //meshes[geometry.Id()] = 
             }
 
-            return null;
+            _meshes.Clear();
+
+            return root;
         }
 
-        private static void Parse()
+        private static GameObject CreateGameObjectWithParent(string name, Transform parent)
         {
-            //var filename = Path.Combine(Application.streamingAssetsPath, _filename);
-            string filename = null;
+            var gameObject = new GameObject(name);
+            gameObject.transform.parent = parent;
 
-            XmlDocument document = new XmlDocument();
-            document.Load(filename);
+            return gameObject;
+        }
 
-            var root = document.DocumentElement;
+        private static GameObject CreateNodeGameObject(XmlElement root, XmlNode node)
+        {
+            var gameObject = new GameObject(node.Attribute("name"));
 
-            #region Materials
-            var effects = new Dictionary<string, Color>();
-            foreach (XmlNode effect in root.ChildNodes[1])
+            foreach (XmlNode child in node.Elements("node"))
+                CreateNodeGameObject(root, child).transform.parent = gameObject.transform;
+
+            var columns = node.Element("matrix")?.InnerText.Split().Select((stringValue, index) => (value: Convert.ToSingle(stringValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index % 4).Select(group => group.Select(pair => pair.value)).Select(col => new Vector4(col.ElementAt(0), col.ElementAt(1), col.ElementAt(2), col.ElementAt(3))) ?? throw new Exception("\"matrix\" element was not finded.");
+            var matrix = new Matrix4x4(columns.ElementAt(0), columns.ElementAt(1), columns.ElementAt(2), columns.ElementAt(3));
+
+            gameObject.transform.localPosition = matrix.GetPosition();
+            gameObject.transform.localRotation = matrix.rotation;
+            gameObject.transform.localScale = matrix.GetScale();
+
+            var instanceGeometry = node.Element("instance_geometry");
+
+            if (instanceGeometry == null)
+                return gameObject;
+
+            var geometryElement = root.Element("library_geometries").ElementWithId(instanceGeometry.Url());
+            if (!_meshes.ContainsKey(geometryElement.Id()))
             {
-                var color = effect.ChildNodes[0].ChildNodes[0].ChildNodes[0].ChildNodes[1].ChildNodes[0].InnerText.Split().Select<string, (float channel, int index)>((channel, index) => (Convert.ToSingle(channel, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 4).Select(g => { var gChannels = g.Select(gData => gData.channel).ToArray(); return new Color(gChannels[0], gChannels[1], gChannels[2], gChannels[3]); }).First();
-                effects[effect.Attributes.GetNamedItem("id").InnerText] = color;
-            }
+                var meshElement = geometryElement.Element("mesh");
 
-            var materials = new Dictionary<string, string>();
-            foreach (XmlNode material in root.ChildNodes[3])
-                materials[material.Attributes.GetNamedItem("id").InnerText] = material.ChildNodes[0].Attributes.GetNamedItem("url").InnerText.Substring(1);
-            #endregion
+                var uniqueVertices = new Dictionary<string, Vector3[]>();
+                var uniqueNormals = new Dictionary<string, Vector3[]>();
+                var uniqueUVs = new Dictionary<string, Vector3[]>();
 
-            #region Meshes
-            var meshes = new Dictionary<string, Mesh>();
-
-            foreach (XmlNode geometry in root.ChildNodes[4])
+                var uniqueArrays = new Dictionary<string, Dictionary<string, Vector3[]>>
             {
-                var meshData = geometry.ChildNodes[0].ChildNodes;
+                { "VERTEX", uniqueVertices },
+                { "NORMAL", uniqueNormals },
+                { "TEXCOORD", uniqueUVs }
+            };
 
-                var vertices = meshData[0].ChildNodes[0].InnerText.Split().Select((sValue, index) => (sValue, index)).GroupBy(pair => pair.index / 3).Select(g => { var sValues = g.Select(data => data.sValue).ToArray(); return new Vector3(Convert.ToSingle(sValues[0], CultureInfo.InvariantCulture), Convert.ToSingle(sValues[1], CultureInfo.InvariantCulture), Convert.ToSingle(sValues[2], CultureInfo.InvariantCulture)); }).ToArray();
-                //var normals = meshData[1].ChildNodes[0].InnerText.Split().Select((sValue, index) => (sValue, index)).GroupBy(pair => pair.index / 3).Select(g => { var sValues = g.Select(data => data.sValue).ToArray(); return new Vector3(Convert.ToSingle(sValues[0], CultureInfo.InvariantCulture), Convert.ToSingle(sValues[1], CultureInfo.InvariantCulture), Convert.ToSingle(sValues[2], CultureInfo.InvariantCulture)); }).ToArray();
-                var triangles = meshData[4].ChildNodes[3].InnerText.Split().Select(sIndex => Convert.ToInt32(sIndex)).ToArray();
+                int trianglesCount = meshElement.Elements("triangles").Select(t => t.Count()).Sum();
+                int arraysSize = trianglesCount * 3;
 
+                var vertices = new Vector3[arraysSize];
+                var normals = new Vector3[arraysSize];
+                var uvs = new Vector3[arraysSize];
 
+                var arrays = new Dictionary<string, Array>
+            {
+                { "VERTEX", vertices },
+                { "NORMAL", normals },
+                { "TEXCOORD", uvs }
+            };
 
-                var mesh = new Mesh
+                var trianglesArray = new int[meshElement.Elements("triangles").Count][];
+
+                int arraysIndex = 0;
+                int trianglesIndex = 0;
+                foreach (var trianglesElement in meshElement.Elements("triangles"))
                 {
-                    vertices = vertices,
-                    //normals = normals
-                    triangles = triangles
-                };
+                    var vertexSource = trianglesElement.ElementWithSemantic("VERTEX")?.Source();
+                    var verticesSourceElement = meshElement.ElementWithId((vertexSource != null ? meshElement.ElementWithId(vertexSource) : meshElement.Element("vertices")).ElementWithSemantic("POSITION").Source());
+                    HandleGeometryVector3Source(uniqueVertices, verticesSourceElement);
 
-                meshes[geometry.Attributes.GetNamedItem("id").InnerText] = mesh;
+                    var normalsSource = trianglesElement.ElementWithSemantic("NORMAL")?.Source();
+                    if (normalsSource != null)
+                    {
+                        var normalsSourceElement = meshElement.ElementWithId(normalsSource);
+                        HandleGeometryVector3Source(uniqueNormals, normalsSourceElement);
+                    }
+
+                    var uvsSource = trianglesElement.ElementWithSemantic("TEXCOORD")?.Source();
+                    if (uvsSource != null)
+                    {
+                        var uvsSourceElement = meshElement.ElementWithId(uvsSource ?? meshElement.Element("vertices").ElementWithSemantic("TEXCOORD").Source());
+                        HandleGeometryVector2Source(uniqueUVs, uvsSourceElement);
+                    }
+
+                    var inputs = new List<(string semantic, string source, int offset)>();
+                    inputs.Add(("VERTEX", meshElement.Element("vertices").ElementWithSemantic("POSITION").Source(), 0));
+
+                    var normalInput = trianglesElement.ElementWithSemantic("NORMAL");
+                    if (normalInput != null)
+                        inputs.Add(("NORMAL", normalInput.Source(), normalInput.Offset()));
+
+                    var texcoordInput = trianglesElement.ElementWithSemantic("TEXCOORD");
+                    if (texcoordInput != null)
+                        inputs.Add(("TEXCOORD", texcoordInput.Source(), texcoordInput.Offset()));
+
+                    int offset = inputs.Select(pair => pair.offset).Max() + 1;
+                    var indexes = trianglesElement.Element("p").InnerText.Split().Select(sIndex => Convert.ToInt32(sIndex)).ToArray();
+
+                    trianglesArray[trianglesIndex] = new int[trianglesElement.Count() * 3];
+                    int currentTrianglesIndex = 0;
+
+                    for (int i = 0; i < indexes.Length; i += offset)
+                    {
+                        for (int j = 0; j < inputs.Count; j++)
+                            arrays[inputs[j].semantic].SetValue(uniqueArrays[inputs[j].semantic][inputs[j].source][indexes[i + inputs[j].offset]], arraysIndex);
+
+                        trianglesArray[trianglesIndex][currentTrianglesIndex++] = arraysIndex++;
+                    }
+
+                    trianglesIndex++;
+                }
+
+                var mesh = new Mesh();
+                mesh.vertices = vertices;
+                mesh.normals = normals;
+                mesh.uv = uvs.Select(uv => (Vector2)uv).ToArray();
+                
+                mesh.subMeshCount = trianglesArray.Length;
+                for (int i = 0; i < trianglesArray.Length; i++)
+                    mesh.SetTriangles(trianglesArray[i], i);
+
+                _meshes.Add(geometryElement.Id(), mesh);
             }
-            #endregion
+
+            gameObject.AddComponent<MeshFilter>().mesh = _meshes[geometryElement.Id()];
+            var renderer = gameObject.AddComponent<MeshRenderer>();
+
+            return gameObject;
+        }
+
+        private static void HandleGeometryVector3Source(Dictionary<string, Vector3[]> dict, XmlNode arraySource)
+        {
+            if (dict.ContainsKey(arraySource.Id()))
+                return;
+
+            var accessorElement = arraySource.Element("technique_common", "accessor") ?? throw new Exception("\"accessor\" element was not finded.");
+            var paramElements = accessorElement.Elements("param");
+
+            if (accessorElement.Attribute("stride") != "3" || paramElements.Count != 3 || paramElements.Where(p => p.Attributes.GetNamedItem("name") != null).Count() != 3)
+                throw new Exception($"Wrong accessor in element: {arraySource.InnerXml}");
+
+            var array = arraySource.ElementWithId(accessorElement.Source()).InnerText.Split().Select((sValue, index) => (value: Convert.ToSingle(sValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 3).Select(g => { var values = g.Select(pair => pair.value); return new Vector3(values.ElementAt(0), values.ElementAt(1), values.ElementAt(2)); }).ToArray();
+            dict.Add(arraySource.Id(), array);
+        }
+
+        private static void HandleGeometryVector2Source(Dictionary<string, Vector3[]> dict, XmlNode arraySource)
+        {
+            if (dict.ContainsKey(arraySource.Id()))
+                return;
+
+            var accessorElement = arraySource.Element("technique_common", "accessor") ?? throw new Exception("\"accessor\" element was not finded.");
+            var paramElements = accessorElement.Elements("param");
+
+            if (accessorElement.Attribute("stride") != "2" || paramElements.Count != 2 || paramElements.Where(p => p.Attributes.GetNamedItem("name") != null).Count() != 2)
+                throw new Exception($"Wrong accessor in element: {arraySource.InnerXml}");
+
+            var array = arraySource.ElementWithId(accessorElement.Source()).InnerText.Split().Select((sValue, index) => (value: Convert.ToSingle(sValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 2).Select(g => { var values = g.Select(pair => pair.value); return new Vector3(values.ElementAt(0), values.ElementAt(1), 0f); }).ToArray();
+            dict.Add(arraySource.Id(), array);
         }
     }
 }
