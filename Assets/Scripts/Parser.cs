@@ -22,6 +22,10 @@ namespace Collada
 
         private static string _defaultMaterialID;
 
+        private static bool _leftHandedAxes;
+
+        private static Func<IEnumerable<float>, Vector3> _axesCorrector;
+
         public static GameObject Load(string filename)
         {
             XmlDocument document = new XmlDocument();
@@ -36,6 +40,13 @@ namespace Collada
 
             var rootElement = document.DocumentElement;
             var root = new GameObject(Path.GetFileNameWithoutExtension(filename));
+
+            _leftHandedAxes = rootElement.Element("asset", "up_axis").InnerText != "Z_UP";
+
+            if (_leftHandedAxes)
+                _axesCorrector = v => new Vector3(v.ElementAt(0), v.ElementAt(1), v.ElementAt(2));
+            else
+                _axesCorrector = v => new Vector3(v.ElementAt(0), v.ElementAt(2), v.ElementAt(1));
 
             foreach (XmlNode sceneElement in rootElement.Elements("scene"))
             {
@@ -55,7 +66,12 @@ namespace Collada
             }
 
             _meshes.Clear();
+
             _materials.Clear();
+            _defaultMaterialID = null;
+
+            _axesCorrector = null;
+            _leftHandedAxes = false;
 
             return root;
         }
@@ -73,19 +89,42 @@ namespace Collada
             var gameObject = new GameObject(node.Attribute("name"));
 
             foreach (XmlNode child in node.Elements("node"))
-                CreateNodeGameObject(root, child).transform.parent = gameObject.transform;
+                CreateNodeGameObject(root, child).transform.SetParent(gameObject.transform, false);
 
             #region Transform
             var columns = node.Element("matrix")?.InnerText.Split().Select((stringValue, index) => (value: Convert.ToSingle(stringValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index % 4).Select(group => group.Select(pair => pair.value)).Select(col => new Vector4(col.ElementAt(0), col.ElementAt(1), col.ElementAt(2), col.ElementAt(3))) ?? throw new Exception("\"matrix\" element was not finded.");
             var matrix = new Matrix4x4(columns.ElementAt(0), columns.ElementAt(1), columns.ElementAt(2), columns.ElementAt(3));
 
-            gameObject.transform.localPosition = matrix.GetPosition();
-            gameObject.transform.localRotation = matrix.rotation;
-            gameObject.transform.localScale = matrix.GetScale();
+            if (_leftHandedAxes)
+            {
+                gameObject.transform.localPosition = matrix.GetPosition();
+                gameObject.transform.localRotation = matrix.rotation;
+                gameObject.transform.localScale = matrix.GetScale();
+            }
+            else
+            {
+                var pos = matrix.GetPosition();
+                
+                var temp = pos.y;
+                pos.y = pos.z;
+                pos.z = temp;
+
+                gameObject.transform.localPosition = pos;
+                gameObject.transform.localRotation = new Quaternion(-matrix.rotation.x, -matrix.rotation.z, -matrix.rotation.y, matrix.rotation.w);
+
+                var scale = matrix.GetScale();
+
+                temp = scale.y;
+                scale.y = scale.z;
+                scale.z = temp;
+
+                gameObject.transform.localScale = scale;
+            }
+
             #endregion
 
             var instanceGeometry = node.Element("instance_geometry");
-            
+
             if (instanceGeometry == null)
                 return gameObject;
 
@@ -175,7 +214,7 @@ namespace Collada
                     #region Materials
                     var triangleMaterialSymbol = trianglesElement.Attribute("material");
                     var materialID = (triangleMaterialSymbol == null) ? _defaultMaterialID : instanceGeometry.Element("bind_material")?.Element("technique_common").ElementWithAttribute("symbol", triangleMaterialSymbol).Attribute("target").Substring(1);
-                    
+
                     if (materialID != null && !_materials.ContainsKey(materialID))
                     {
                         var materialElement = root.Element("library_materials").ElementWithId(materialID);
@@ -193,6 +232,19 @@ namespace Collada
                     #endregion
                 }
 
+                if (!_leftHandedAxes)
+                {
+                    for (int i = 0; i < trianglesArray.Length; i++)
+                    {
+                        for (int j = 0; j < trianglesArray[i].Length; j += 3)
+                        {
+                            var temp = trianglesArray[i][j + 1];
+                            trianglesArray[i][j + 1] = trianglesArray[i][j + 2];
+                            trianglesArray[i][j + 2] = temp;
+                        }
+                    }
+                }
+
                 var mesh = new Mesh();
                 mesh.vertices = vertices;
                 mesh.normals = normals;
@@ -207,10 +259,10 @@ namespace Collada
             #endregion
 
             gameObject.AddComponent<MeshFilter>().mesh = _meshes[geometryElement.Id()];
-            
+
             var renderer = gameObject.AddComponent<MeshRenderer>();
             renderer.materials = trianglesMaterials.Select(id => _materials[id]).ToArray();
-            
+
             return gameObject;
         }
 
@@ -225,7 +277,7 @@ namespace Collada
             if (accessorElement.Attribute("stride") != "3" || paramElements.Count != 3 || paramElements.Where(p => p.Attributes.GetNamedItem("name") != null).Count() != 3)
                 throw new Exception($"Wrong accessor in element: {arraySource.InnerXml}");
 
-            var array = arraySource.ElementWithId(accessorElement.Source()).InnerText.Split().Select((sValue, index) => (value: Convert.ToSingle(sValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 3).Select(g => { var values = g.Select(pair => pair.value); return new Vector3(values.ElementAt(0), values.ElementAt(1), values.ElementAt(2)); }).ToArray();
+            var array = arraySource.ElementWithId(accessorElement.Source()).InnerText.Split().Select((sValue, index) => (value: Convert.ToSingle(sValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 3).Select(g => { var values = g.Select(pair => pair.value); return _axesCorrector(values); }).ToArray();
             dict.Add(arraySource.Id(), array);
         }
 
