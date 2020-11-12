@@ -152,7 +152,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 604158d73a876c244a6b0be3557428fa, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  _filename: cube.dae
+  _inputFile: 
+  _outputFile: 
 --- !u!4 &48173782
 Transform:
   m_ObjectHideFlags: 0

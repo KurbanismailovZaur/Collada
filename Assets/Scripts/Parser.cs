@@ -26,15 +26,17 @@ namespace Collada
 
         private static Func<IEnumerable<float>, Vector3> _axesCorrector;
 
-        public static GameObject Load(string filename)
+        public static (GameObject model, List<GameObject> wires) Load(string filename)
         {
             XmlDocument document = new XmlDocument();
             document.Load(filename);
 
             _defaultMaterialID = Guid.NewGuid().ToString();
 
-            var defaultMaterial = new Material(Shader.Find("Standard"));
-            defaultMaterial.name = "Default";
+            var defaultMaterial = new Material(Shader.Find("Standard"))
+            {
+                name = "Default"
+            };
 
             _materials.Add(_defaultMaterialID, defaultMaterial);
 
@@ -48,6 +50,8 @@ namespace Collada
             else
                 _axesCorrector = v => new Vector3(v.ElementAt(0), v.ElementAt(2), v.ElementAt(1));
 
+            var wires = new List<GameObject>();
+
             foreach (XmlNode sceneElement in rootElement.Elements("scene"))
             {
                 var sceneId = sceneElement.Element("instance_visual_scene")?.Url();
@@ -60,7 +64,7 @@ namespace Collada
 
                 foreach (XmlNode node in visualSceneElement.Elements("node"))
                 {
-                    var gameObject = CreateNodeGameObject(rootElement, node);
+                    var gameObject = CreateNodeGameObject(rootElement, node, wires);
                     gameObject.transform.parent = visualScene.transform;
                 }
             }
@@ -73,7 +77,7 @@ namespace Collada
             _axesCorrector = null;
             _leftHandedAxes = false;
 
-            return root;
+            return (root, wires);
         }
 
         private static GameObject CreateGameObjectWithParent(string name, Transform parent)
@@ -84,12 +88,12 @@ namespace Collada
             return gameObject;
         }
 
-        private static GameObject CreateNodeGameObject(XmlElement root, XmlNode node)
+        private static GameObject CreateNodeGameObject(XmlElement root, XmlNode node, List<GameObject> wires)
         {
             var gameObject = new GameObject(node.Attribute("name"));
 
             foreach (XmlNode child in node.Elements("node"))
-                CreateNodeGameObject(root, child).transform.SetParent(gameObject.transform, false);
+                CreateNodeGameObject(root, child, wires).transform.SetParent(gameObject.transform, false);
 
             #region Transform
             var columns = node.Element("matrix")?.InnerText.Split().Select((stringValue, index) => (value: Convert.ToSingle(stringValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index % 4).Select(group => group.Select(pair => pair.value)).Select(col => new Vector4(col.ElementAt(0), col.ElementAt(1), col.ElementAt(2), col.ElementAt(3))) ?? throw new Exception("\"matrix\" element was not finded.");
@@ -262,6 +266,10 @@ namespace Collada
 
             var renderer = gameObject.AddComponent<MeshRenderer>();
             renderer.materials = trianglesMaterials.Select(id => _materials[id]).ToArray();
+
+            var type = node.Attribute("elementType");
+            if (type != null && type == "Wire")
+                wires.Add(gameObject);
 
             return gameObject;
         }

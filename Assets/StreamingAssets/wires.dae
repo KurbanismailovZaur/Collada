@@ -267,7 +267,7 @@
   </library_geometries>
   <library_visual_scenes>
     <visual_scene id="Scene" name="Scene">
-      <node id="RedWire" name="RedWire" type="NODE" group="Wire">
+      <node id="RedWire" name="RedWire" type="NODE" elementType="Wire">
         <matrix sid="transform">1 0 0 -4.999998 0 1 0 0.6 0 0 1 0 0 0 0 1</matrix>
         <instance_geometry url="#Cube_003-mesh" name="RedWire">
           <bind_material>
@@ -279,7 +279,7 @@
           </bind_material>
         </instance_geometry>
       </node>
-      <node id="BlueWire" name="BlueWire" type="NODE" group="Wire">
+      <node id="BlueWire" name="BlueWire" type="NODE" elementType="Wire">
         <matrix sid="transform">1 0 0 4.999998 0 1 0 -0.6 0 0 1 0 0 0 0 1</matrix>
         <instance_geometry url="#Cube_002-mesh" name="BlueWire">
           <bind_material>
@@ -291,7 +291,7 @@
           </bind_material>
         </instance_geometry>
       </node>
-      <node id="WhiteBlock" name="WhiteBlock" type="NODE" group="Wire">
+      <node id="WhiteBlock" name="WhiteBlock" type="NODE">
         <matrix sid="transform">1 0 0 4.999998 0 1 0 5.58794e-9 0 0 1 1.86265e-9 0 0 0 1</matrix>
         <instance_geometry url="#Cube_001-mesh" name="WhiteBlock">
           <bind_material>
@@ -303,7 +303,7 @@
           </bind_material>
         </instance_geometry>
       </node>
-      <node id="BlackBlock" name="BlackBlock" type="NODE" group="Wire">
+      <node id="BlackBlock" name="BlackBlock" type="NODE">
         <matrix sid="transform">1 0 0 -4.999998 0 1 0 5.58794e-9 0 0 1 1.86265e-9 0 0 0 1</matrix>
         <instance_geometry url="#Cube-mesh" name="BlackBlock">
           <bind_material>

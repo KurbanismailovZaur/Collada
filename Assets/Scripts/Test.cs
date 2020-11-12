@@ -8,11 +8,16 @@ namespace Collada
     public class Test : MonoBehaviour
     {
         [SerializeField]
-        private string _filename;
+        private string _inputFile;
+
+        [SerializeField]
+        private string _outputFile;
 
         private void Start()
         {
-            Parser.Load(Path.Combine(Application.streamingAssetsPath, _filename));
+            var (model, wires) = Parser.Load(Path.Combine(Application.streamingAssetsPath, _inputFile));
+
+            
         }
     }
 }
