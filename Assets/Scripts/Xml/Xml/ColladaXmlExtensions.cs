@@ -47,7 +47,7 @@ namespace Collada.Extensions.Xml
             return nodes;
         }
 
-        public static string Attribute(this XmlNode node, string name) => node.Attributes.GetNamedItem(name).InnerText;
+        public static string Attribute(this XmlNode node, string name) => node.Attributes.GetNamedItem(name)?.InnerText;
 
         public static string Id(this XmlNode node) => Attribute(node, "id");
 

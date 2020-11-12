@@ -18,10 +18,21 @@ namespace Collada
     {
         private static Dictionary<string, Mesh> _meshes = new Dictionary<string, Mesh>();
 
+        private static Dictionary<string, Material> _materials = new Dictionary<string, Material>();
+
+        private static string _defaultMaterialID;
+
         public static GameObject Load(string filename)
         {
             XmlDocument document = new XmlDocument();
             document.Load(filename);
+
+            _defaultMaterialID = Guid.NewGuid().ToString();
+
+            var defaultMaterial = new Material(Shader.Find("Standard"));
+            defaultMaterial.name = "Default";
+
+            _materials.Add(_defaultMaterialID, defaultMaterial);
 
             var rootElement = document.DocumentElement;
             var root = new GameObject(Path.GetFileNameWithoutExtension(filename));
@@ -44,6 +55,7 @@ namespace Collada
             }
 
             _meshes.Clear();
+            _materials.Clear();
 
             return root;
         }
@@ -63,18 +75,23 @@ namespace Collada
             foreach (XmlNode child in node.Elements("node"))
                 CreateNodeGameObject(root, child).transform.parent = gameObject.transform;
 
+            #region Transform
             var columns = node.Element("matrix")?.InnerText.Split().Select((stringValue, index) => (value: Convert.ToSingle(stringValue, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index % 4).Select(group => group.Select(pair => pair.value)).Select(col => new Vector4(col.ElementAt(0), col.ElementAt(1), col.ElementAt(2), col.ElementAt(3))) ?? throw new Exception("\"matrix\" element was not finded.");
             var matrix = new Matrix4x4(columns.ElementAt(0), columns.ElementAt(1), columns.ElementAt(2), columns.ElementAt(3));
 
             gameObject.transform.localPosition = matrix.GetPosition();
             gameObject.transform.localRotation = matrix.rotation;
             gameObject.transform.localScale = matrix.GetScale();
+            #endregion
 
             var instanceGeometry = node.Element("instance_geometry");
-
+            
             if (instanceGeometry == null)
                 return gameObject;
 
+            string[] trianglesMaterials = null;
+
+            #region Geometry
             var geometryElement = root.Element("library_geometries").ElementWithId(instanceGeometry.Url());
             if (!_meshes.ContainsKey(geometryElement.Id()))
             {
@@ -85,11 +102,11 @@ namespace Collada
                 var uniqueUVs = new Dictionary<string, Vector3[]>();
 
                 var uniqueArrays = new Dictionary<string, Dictionary<string, Vector3[]>>
-            {
-                { "VERTEX", uniqueVertices },
-                { "NORMAL", uniqueNormals },
-                { "TEXCOORD", uniqueUVs }
-            };
+                {
+                    { "VERTEX", uniqueVertices },
+                    { "NORMAL", uniqueNormals },
+                    { "TEXCOORD", uniqueUVs }
+                };
 
                 int trianglesCount = meshElement.Elements("triangles").Select(t => t.Count()).Sum();
                 int arraysSize = trianglesCount * 3;
@@ -99,13 +116,14 @@ namespace Collada
                 var uvs = new Vector3[arraysSize];
 
                 var arrays = new Dictionary<string, Array>
-            {
-                { "VERTEX", vertices },
-                { "NORMAL", normals },
-                { "TEXCOORD", uvs }
-            };
+                {
+                    { "VERTEX", vertices },
+                    { "NORMAL", normals },
+                    { "TEXCOORD", uvs }
+                };
 
                 var trianglesArray = new int[meshElement.Elements("triangles").Count][];
+                trianglesMaterials = new string[trianglesArray.Length];
 
                 int arraysIndex = 0;
                 int trianglesIndex = 0;
@@ -154,24 +172,45 @@ namespace Collada
                         trianglesArray[trianglesIndex][currentTrianglesIndex++] = arraysIndex++;
                     }
 
-                    trianglesIndex++;
+                    #region Materials
+                    var triangleMaterialSymbol = trianglesElement.Attribute("material");
+                    var materialID = (triangleMaterialSymbol == null) ? _defaultMaterialID : instanceGeometry.Element("bind_material")?.Element("technique_common").ElementWithAttribute("symbol", triangleMaterialSymbol).Attribute("target").Substring(1);
+                    
+                    if (materialID != null && !_materials.ContainsKey(materialID))
+                    {
+                        var materialElement = root.Element("library_materials").ElementWithId(materialID);
+                        var color = root.Element("library_effects").ElementWithId(materialElement.Element("instance_effect").Url()).Element("profile_COMMON", "technique", "lambert", "diffuse", "color").InnerText.Split().Select((sColor, index) => (value: Convert.ToSingle(sColor, CultureInfo.InvariantCulture), index)).GroupBy(pair => pair.index / 4).Select(g => { var values = g.Select(pair => pair.value); return new Color(values.ElementAt(0), values.ElementAt(1), values.ElementAt(2), values.ElementAt(3)); }).First();
+                        var material = new Material(Shader.Find("Standard"))
+                        {
+                            name = materialElement.Attribute("name"),
+                            color = color
+                        };
+
+                        _materials.Add(materialID, material);
+                    }
+
+                    trianglesMaterials[trianglesIndex++] = materialID;
+                    #endregion
                 }
 
                 var mesh = new Mesh();
                 mesh.vertices = vertices;
                 mesh.normals = normals;
                 mesh.uv = uvs.Select(uv => (Vector2)uv).ToArray();
-                
+
                 mesh.subMeshCount = trianglesArray.Length;
                 for (int i = 0; i < trianglesArray.Length; i++)
                     mesh.SetTriangles(trianglesArray[i], i);
 
                 _meshes.Add(geometryElement.Id(), mesh);
             }
+            #endregion
 
             gameObject.AddComponent<MeshFilter>().mesh = _meshes[geometryElement.Id()];
+            
             var renderer = gameObject.AddComponent<MeshRenderer>();
-
+            renderer.materials = trianglesMaterials.Select(id => _materials[id]).ToArray();
+            
             return gameObject;
         }
 
