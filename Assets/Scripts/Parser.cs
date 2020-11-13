@@ -9,8 +9,6 @@ using System.Security.Principal;
 using System.Xml;
 using UnityEngine;
 using Collada.Extensions.Xml;
-using System.Runtime.Remoting.Messaging;
-using System.Net.Http.Headers;
 
 namespace Collada
 {
@@ -26,7 +24,9 @@ namespace Collada
 
         private static Func<IEnumerable<float>, Vector3> _axesCorrector;
 
-        public static (GameObject model, List<GameObject> wires) Load(string filename)
+        private static Dictionary<string, (Vector3[] points, int[] indexes)> _lines = new Dictionary<string, (Vector3[] points, int[] indexes)>();
+
+        public static (GameObject model, List<Wire> wires) Load(string filename)
         {
             XmlDocument document = new XmlDocument();
             document.Load(filename);
@@ -50,7 +50,7 @@ namespace Collada
             else
                 _axesCorrector = v => new Vector3(v.ElementAt(0), v.ElementAt(2), v.ElementAt(1));
 
-            var wires = new List<GameObject>();
+            var wires = new List<Wire>();
 
             foreach (XmlNode sceneElement in rootElement.Elements("scene"))
             {
@@ -77,6 +77,8 @@ namespace Collada
             _axesCorrector = null;
             _leftHandedAxes = false;
 
+            _lines.Clear();
+
             return (root, wires);
         }
 
@@ -88,7 +90,7 @@ namespace Collada
             return gameObject;
         }
 
-        private static GameObject CreateNodeGameObject(XmlElement root, XmlNode node, List<GameObject> wires)
+        private static GameObject CreateNodeGameObject(XmlElement root, XmlNode node, List<Wire> wires)
         {
             var gameObject = new GameObject(node.Attribute("name"));
 
@@ -108,7 +110,7 @@ namespace Collada
             else
             {
                 var pos = matrix.GetPosition();
-                
+
                 var temp = pos.y;
                 pos.y = pos.z;
                 pos.z = temp;
@@ -165,6 +167,7 @@ namespace Collada
                     { "TEXCOORD", uvs }
                 };
 
+                #region Triangles
                 var trianglesArray = new int[meshElement.Elements("triangles").Count][];
                 trianglesMaterials = new string[trianglesArray.Length];
 
@@ -248,7 +251,9 @@ namespace Collada
                         }
                     }
                 }
+                #endregion
 
+                #region Mesh
                 var mesh = new Mesh();
                 mesh.vertices = vertices;
                 mesh.normals = normals;
@@ -259,17 +264,49 @@ namespace Collada
                     mesh.SetTriangles(trianglesArray[i], i);
 
                 _meshes.Add(geometryElement.Id(), mesh);
+                #endregion
+
+                #region Lines
+                var lineElement = meshElement.Element("lines");
+
+                if (lineElement != null)
+                {
+                    var verticesID = lineElement.ElementWithSemantic("VERTEX")?.Source();
+                    var verticesSourceElement = meshElement.ElementWithId(verticesID != null ? meshElement.ElementWithId(verticesID).ElementWithSemantic("POSITION").Source() : meshElement.Element("vertices").ElementWithSemantic("POSITION").Source());
+                    HandleGeometryVector3Source(uniqueVertices, verticesSourceElement);
+
+                    var lineIndexes = lineElement.Element("p").InnerText.Split().Select(sValue => Convert.ToInt32(sValue)).ToArray();
+                    _lines.Add(geometryElement.Id(), (uniqueVertices[verticesSourceElement.Id()], lineIndexes));
+                }
+                #endregion
             }
             #endregion
 
-            gameObject.AddComponent<MeshFilter>().mesh = _meshes[geometryElement.Id()];
+            var type = node.Attribute("element_type");
 
-            var renderer = gameObject.AddComponent<MeshRenderer>();
-            renderer.materials = trianglesMaterials.Select(id => _materials[id]).ToArray();
+            if (type == null)
+            {
+                gameObject.AddComponent<MeshFilter>().mesh = _meshes[geometryElement.Id()];
 
-            var type = node.Attribute("elementType");
-            if (type != null && type == "Wire")
-                wires.Add(gameObject);
+                var renderer = gameObject.AddComponent<MeshRenderer>();
+                renderer.materials = trianglesMaterials.Select(id => _materials[id]).ToArray();
+            }
+            else if (type == "Wire")
+            {
+                var wire = gameObject.AddComponent<Wire>();
+                wire.Mark = node.Attribute("mark");
+                wire.StartBlock = node.Attribute("start_block").Substring(1);
+                wire.StartBlockIndex = Convert.ToInt32(node.Attribute("start_block_index"));
+                wire.EndBlocks = node.Attribute("end_blocks").Split().Select(eb => eb.Substring(1)).ToArray();
+                wire.EndBlocksIndexes = node.Attribute("end_blocks_indexes").Split().Select(sIndex => Convert.ToInt32(sIndex)).ToArray();
+
+                var line = _lines[geometryElement.Id()];
+
+                wire.Points = line.points;
+                wire.Indexes = line.indexes;
+
+                wires.Add(wire);
+            }
 
             return gameObject;
         }
