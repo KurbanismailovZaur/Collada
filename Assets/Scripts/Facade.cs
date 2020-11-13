@@ -6,6 +6,7 @@ using System.Linq;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using UI.Exploring.FileSystem;
+using UnityEngine.UI;
 
 namespace Collada
 {
@@ -14,6 +15,9 @@ namespace Collada
         private GameObject _model;
 
         private List<Wire> _wires;
+
+        [SerializeField]
+        private Button _calculateButton;
 
         public void OpenCollada() => StartCoroutine(OpenColladaRoutine());
 
@@ -30,6 +34,8 @@ namespace Collada
             Resources.UnloadUnusedAssets();
 
             (_model, _wires) = Parser.Load(FileExplorer.Instance.LastResult);
+
+            _calculateButton.interactable = true;
         }
 
         public void Calculate()
